@@ -8,9 +8,26 @@
 #include <locale> 
 
 // Функция 6, вариант 
-double function(double x)
+double f(double x)
 {
     return log(x) / sqrt(1.2 + 0.3 * x);
+}
+
+// Общий расчет суммы трапеций
+double trapezoidSum(int start,int end,double a, double h)
+{
+    double sum = 0.0;
+
+    for (int i = start; i < end; i++)
+    {
+        double x1 = a + i * h;
+        double x2 = a + (i + 1) * h;
+
+        sum += (f(x1) + f(x2))
+            / 2.0 * h;
+    }
+
+    return sum;
 }
 
 // POSIX 
@@ -22,30 +39,19 @@ struct ThreadData
     double h;
 };
 
-// Функция, выполняемая POSIX-потоком 
 void* posixCalculate(void* arg)
 {
     ThreadData* data = (ThreadData*)arg;
 
-    double sum = 0.0;
-
-    for (int i = data->start; i < data->end; i++)
-    {
-        double x1 = data->a + i * data->h;
-        double x2 = data->a + (i + 1) * data->h;
-
-        sum += (function(x1) + function(x2))
-            / 2.0 * data->h;
-    }
-
     double* result = new double;
-    *result = sum;
+
+    *result = trapezoidSum(data->start,data->end,data->a,data->h);
 
     return result;
 }
 
-// Полный расчет POSIX 
-double calculatePOSIX(int n, int threadCount, double a, double b)
+// Полный расчет POSIX
+double calculatePOSIX(int n,int threadCount,double a,double b)
 {
     double h = (b - a) / n;
 
@@ -66,62 +72,31 @@ double calculatePOSIX(int n, int threadCount, double a, double b)
         data[i].a = a;
         data[i].h = h;
 
-        int status = pthread_create(
-            &threads[i],
-            NULL,
-            posixCalculate,
-            &data[i]
-        );
-
-        if (status != 0)
-        {
-            std::cout << "Ошибка создания потока "
-                << i << "\n";
-
-            return 0.0;
-        }
+        pthread_create(&threads[i], NULL, posixCalculate, &data[i]);
     }
+
     double result = 0.0;
 
     for (int i = 0; i < threadCount; i++)
     {
         void* returnedValue = nullptr;
 
-        pthread_join(
-            threads[i],
-            &returnedValue
-        );
+        pthread_join(threads[i],&returnedValue);
 
         result += *((double*)returnedValue);
 
         delete (double*)returnedValue;
     }
-
     return result;
 }
 
 // STD::THREAD 
-void stdCalculate(
-    int start,
-    int end,
-    double a,
-    double h,
-    double& result
-)
+void stdCalculate(int start,int end,double a,double h,double& result)
 {
-    result = 0.0;
-
-    for (int i = start; i < end; i++)
-    {
-        double x1 = a + i * h;
-        double x2 = a + (i + 1) * h;
-
-        result += (function(x1) + function(x2))
-            / 2.0 * h;
-    }
+    result = trapezoidSum(start,end,a,h);
 }
 
-double calculateSTD(int n, int threadCount, double a, double b)
+double calculateSTD(int n,int threadCount,double a,double b)
 {
     double h = (b - a) / n;
 
@@ -133,6 +108,7 @@ double calculateSTD(int n, int threadCount, double a, double b)
     for (int i = 0; i < threadCount; i++)
     {
         int start = i * part;
+
         int end;
 
         if (i == threadCount - 1)
@@ -140,14 +116,7 @@ double calculateSTD(int n, int threadCount, double a, double b)
         else
             end = (i + 1) * part;
 
-        threads[i] = std::thread(
-            stdCalculate,
-            start,
-            end,
-            a,
-            h,
-            std::ref(results[i])
-        );
+        threads[i] = std::thread(stdCalculate,start,end,a,h,std::ref(results[i]));
     }
 
     double result = 0.0;
@@ -162,110 +131,40 @@ double calculateSTD(int n, int threadCount, double a, double b)
     return result;
 }
 
-
-// ТЕСТ POSIX 
-void testPOSIX(int n, int maxThreads, double a, double b)
+//тестирование
+void testMethod(const std::string& name,
+    double (*calc)(int, int, double, double),
+    int n, int maxThreads, double a, double b)
 {
-    std::cout << "\n";
-    std::cout << "POSIX THREADS\n";
+    std::cout << "\n" << name << "\n";
 
     double oneThreadTime = 0.0;
 
-    for (int threads = 1;
-        threads <= maxThreads;
-        threads++)
+    for (int threads = 1; threads <= maxThreads; ++threads)
     {
-        auto start =
-            std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
+        double result = calc(n, threads, a, b);
+        auto finish = std::chrono::high_resolution_clock::now();
 
-        double result =
-            calculatePOSIX(n, threads, a, b);
+        double time = std::chrono::duration<double, std::milli>
+            (finish - start).count();
 
-        auto finish =
-            std::chrono::high_resolution_clock::now();
+        if (threads == 1) oneThreadTime = time;
 
-        double time =
-            std::chrono::duration<double, std::milli>(
-                finish - start
-            ).count();
+        double speedup = oneThreadTime / time;
+        double efficiency = speedup / threads * 100.0;
 
-        if (threads == 1)
-            oneThreadTime = time;
-
-        double speedup =
-            oneThreadTime / time;
-
-        double efficiency =
-            speedup / threads * 100.0;
-
-        std::cout << std::fixed
-            << std::setprecision(6);
-
-        std::cout << "Потоков: " << threads
+        std::cout << std::fixed << std::setprecision(6)
+            << "Потоков: " << threads
             << " | Время: " << time
             << " мс | Результат: " << result
             << " | Ускорение: " << speedup
-            << " | Эффективность: "
-            << efficiency << "%\n";
+            << " | Эффективность: " << efficiency << "%\n";
     }
 }
-
-
-// ТЕСТ STD::THREAD 
-void testSTD(int n, int maxThreads, double a, double b)
-{
-    std::cout << "\n";
-    std::cout << "STD::THREAD\n";
-
-    double oneThreadTime = 0.0;
-
-    for (int threads = 1;
-        threads <= maxThreads;
-        threads++)
-    {
-        auto start =
-            std::chrono::high_resolution_clock::now();
-
-        double result =
-            calculateSTD(n, threads, a, b);
-
-        auto finish =
-            std::chrono::high_resolution_clock::now();
-
-        double time =
-            std::chrono::duration<double, std::milli>(
-                finish - start
-            ).count();
-
-        if (threads == 1)
-            oneThreadTime = time;
-
-        double speedup =
-            oneThreadTime / time;
-
-        double efficiency =
-            speedup / threads * 100.0;
-
-        std::cout << std::fixed
-            << std::setprecision(6);
-
-        std::cout << "Потоков: " << threads
-            << " | Время: " << time
-            << " мс | Результат: " << result
-            << " | Ускорение: " << speedup
-            << " | Эффективность: "
-            << efficiency << "%\n";
-    }
-}
-
 
 // Сравнение одно- и многопоточного вычисления 
-void compareResults(
-    int n,
-    int mainThreads,
-    double a,
-    double b
-)
+void compareResults(int n,int mainThreads,double a,double b)
 {
     std::cout << "\n";
     std::cout << "СРАВНЕНИЕ ОДНОПОТОЧНОГО И "
@@ -337,7 +236,6 @@ void compareResults(
             finishSTD1 - startSTD1
         ).count();
 
-
     auto startSTDN =
         std::chrono::high_resolution_clock::now();
 
@@ -352,10 +250,8 @@ void compareResults(
             finishSTDN - startSTDN
         ).count();
 
-
     double speedupSTD =
         timeSTD1 / timeSTDN;
-
 
     std::cout << "\nstd::thread\n";
     std::cout << "Однопоточное вычисление:\n";
@@ -398,7 +294,6 @@ int main()
     std::cout
         << "Введите количество потоков "
         "для основного вычисления: ";
-
     std::cin >> mainThreads;
     std::cout
         << "Введите максимальное количество "
@@ -435,9 +330,9 @@ int main()
 
         return 1;
     }
+    testMethod("POSIX THREADS", calculatePOSIX, n, maxThreads, a, b);
+    testMethod("STD::THREAD", calculateSTD, n, maxThreads, a, b);
 
-    testPOSIX(n, maxThreads, a, b);
-    testSTD(n, maxThreads, a, b);
     compareResults(n, mainThreads, a, b);
 
     return 0;
